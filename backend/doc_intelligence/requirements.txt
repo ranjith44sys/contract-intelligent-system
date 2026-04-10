@@ -1,0 +1,9 @@
+openai
+pymupdf
+camelot-py[cv]
+pandas
+python-dotenv
+regex
+tiktoken
+jsonschema
+Pillow
