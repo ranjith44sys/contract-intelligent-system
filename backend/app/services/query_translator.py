@@ -1,132 +1,117 @@
-from typing import Dict, List
-from app.config import client, MODEL
+import os
 import json
+import re
+from app.schema.query import QueryTranslation
+from app.utils.cache import get_cache, set_cache
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 
 class QueryTranslator:
+    def __init__(self, api_key: str = None):
+        # Allow passing API key, fallback to env var
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if OpenAI and self.api_key:
+            self.client = OpenAI(api_key=self.api_key)
+        else:
+            self.client = None
+        self.model = os.getenv("MODEL", "gpt-4-turbo")
 
-    def _prompt(self, query: str) -> str:
-        return f"""
-You are an expert legal information retrieval assistant specializing in Retrieval-Augmented Generation (RAG) systems.
+    def translate(self, query: str) -> QueryTranslation:
+        cache_key = f"query:{query}"
+        cached = get_cache(cache_key)
+        if cached:
+            return QueryTranslation(**cached)
 
-Your task is to transform a user query into structured, retrieval-optimized representations that maximize both recall and precision in downstream semantic and keyword search systems.
+        if not self.client:
+            # Fallback when no API Key is available
+            expanded = [
+                f"{query} legal definition",
+                f"{query} liability clause",
+                f"meaning of {query} in contract"
+            ]
+            data = {
+                "expanded": expanded,
+                "rewritten": f"What are the contract clauses regarding {query}?",
+                "decomposed": [f"{query} rules", f"{query} conditions"]
+            }
+            set_cache(cache_key, data)
+            return QueryTranslation(**data)
 
-You must generate THREE outputs:
+        # Build prompt and query
+        user_message = f"Translate this legal contract query:\n\n{query}"
 
----
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a query translation engine for a legal contract semantic search RAG system.\n"
+                            "Output ONLY valid JSON — no markdown, no commentary, no extra keys.\n\n"
+                            "Rules:\n"
+                            "- 'expanded': EXACTLY 4 paraphrased variants of the query. This field is MANDATORY "
+                            "and must always contain 4 strings. Use legal synonyms, clause-level rephrasing, "
+                            "jurisdiction-aware language, and different levels of specificity.\n"
+                            "- 'rewritten': One precise legal query optimised for embedding search.\n"
+                            "- 'decomposed': 2-3 atomic legal sub-questions ONLY for multi-issue queries. Use [] for single-issue.\n\n"
+                            "Output format (strict):\n"
+                            '{"expanded": ["legal v1", "legal v2", "legal v3", "legal v4"], '
+                            '"rewritten": "precise legal query", "decomposed": ["sub-q1", "sub-q2"]}'
+                        )
+                    },
+                    {"role": "user", "content": user_message}
+                ],
+                temperature=0.5,
+            )
+            content = response.choices[0].message.content.strip()
+            content = re.sub(r"^```[a-z]*\n?|```$", "", content, flags=re.MULTILINE).strip()
+            data = json.loads(content)
+        except Exception:
+            data = {
+                "expanded": [query] * 4,
+                "rewritten": query,
+                "decomposed": [],
+            }
 
-1. Multi-Query Expansion
-- Generate 3 to 5 diverse query variants
-- Each query should reflect a different perspective:
-  • synonym variation (legal terminology)
-  • paraphrasing
-  • broader interpretation
-  • narrower/specific interpretation
-- Preserve legal intent and terminology accuracy
-- Avoid redundancy — each query must be meaningfully distinct
-- Ensure queries are retrieval-friendly (not too verbose)
+        # --- Enforce and repair constraints ---
+        expanded   = [s for s in data.get("expanded", []) if isinstance(s, str) and s.strip()]
+        decomposed = [s for s in data.get("decomposed", []) if isinstance(s, str) and s.strip()]
+        rewritten  = data.get("rewritten", query)
 
----
+        # Deduplicate while preserving order
+        seen = []
+        for v in expanded:
+            if v not in seen:
+                seen.append(v)
+        expanded = seen
 
-2. Query Rewriting
-- Convert the input into a clear, formal, well-structured natural language question
-- Use precise legal phrasing where appropriate
-- Make implicit intent explicit
-- Avoid ambiguity
+        # Pad to minimum 3 with legal-aware fallbacks
+        legal_fallbacks = [
+            f"legal contract clause regarding: {query}",
+            f"contractual obligation related to: {query}",
+            f"agreement provision concerning: {query}",
+        ]
+        fb_idx = 0
+        while len(expanded) < 3:
+            expanded.append(legal_fallbacks[fb_idx % len(legal_fallbacks)])
+            fb_idx += 1
 
----
+        expanded = expanded[:5]
+        decomposed = decomposed[:3]
 
-3. Query Decomposition (Least-to-Most Reasoning)
-- Break the query into 2–4 smaller sub-queries
-- Order them logically from foundational → advanced
-- Each sub-query should:
-  • be independently retrievable
-  • focus on a single concept
-  • collectively cover the full intent
+        if not isinstance(rewritten, str) or not rewritten.strip():
+            rewritten = query
 
----
-
-Guidelines:
-- Assume the domain is legal contracts unless specified otherwise
-- Prefer legally meaningful terms (e.g., "indemnity", "breach", "liability", "termination")
-- Handle vague or short queries by intelligently inferring intent
-- Do NOT hallucinate facts — only reformulate the query
-- Keep outputs concise and structured
-
----
-
-Return ONLY valid JSON in the following format:
-
-{
-  "expanded": ["query1", "query2", "query3"],
-  "rewritten": "clear rewritten question",
-  "decomposed": ["step1", "step2", "step3"]
-}
-
----
-
-User Query:
-"{query}"
-"""
-
-    def translate(self, query: str) -> Dict:
-
-        response = client.responses.create(
-            model=MODEL,
-            temperature=0.2,
-            response_format={"type": "json_object"},
-            input=self._prompt(query)
-        )
-
-        parsed = json.loads(response.output[0].content[0].text)
-
-        return {
-            "original": query,
-            "expanded": parsed["expanded"],
-            "rewritten": parsed["rewritten"],
-            "decomposed": parsed["decomposed"]
+        data = {
+            "expanded": expanded,
+            "rewritten": rewritten,
+            "decomposed": decomposed,
         }
 
-
-'''
-Examples: 
-
-1. what happens if contract is breached
-
-{
-  "original": "what happens if contract is breached",
-  "expanded": "contract OR agreement",
-  "rewritten": "What are the clauses regarding what happens if contract is breached?",
-  "decomposed": [
-    "what clause",
-    "happens clause",
-    "contract clause"
-  ]
-}
-
-2. fraud liability in contract
-
-{
-  "original": "fraud liability in contract",
-  "expanded": "fraud OR misrepresentation OR deceit OR liability OR indemnity OR responsibility OR contract OR agreement",
-  "rewritten": "What are the liability clauses related to fraud?",
-  "decomposed": [
-    "liability clause",
-    "fraud condition"
-  ]
-}
-
-3. audit rights of client
-
-{
-  "original": "audit rights of client",
-  "expanded": "audit OR inspection OR review",
-  "rewritten": "What are the audit rights and obligations defined in the contract?",
-  "decomposed": [
-    "audit clause",
-    "rights clause",
-    "client clause"
-  ]
-}
-
-'''
+        set_cache(cache_key, data)
+        return QueryTranslation(**data)

@@ -21,9 +21,11 @@ class ClauseGraphBuilder:
                 "clause_type": clause.get("clause_type", "Others"),
                 "confidence": clause.get("confidence", 0.0),
                 "text": clause.get("text", ""),
-                "raw_text": clause.get("text", ""), # For now
+                "raw_text": clause.get("raw_text", clause.get("text", "")),
                 "page_number": clause.get("page_number", 1),
-                "section_number": clause.get("section_number", "")
+                "section_number": clause.get("section_number", ""),
+                "definitions": clause.get("definitions", []),
+                "references": clause.get("references", [])
             }
             graph.append(node)
             

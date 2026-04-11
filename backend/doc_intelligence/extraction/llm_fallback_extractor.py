@@ -1,4 +1,4 @@
-import fitz
+import pypdfium2 as pdfium
 import base64
 import io
 from PIL import Image
@@ -14,12 +14,19 @@ class LLMFallbackExtractor:
         logger.info(f"Triggering LLM Vision fallback for page {page_number}...")
         
         try:
-            # 1. Convert page to image using PyMuPDF
-            doc = fitz.open(self.file_path)
-            page = doc.load_page(page_number - 1)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # Higher resolution for better OCR
-            img_data = pix.tobytes("png")
-            doc.close()
+            # 1. Convert page to image using pypdfium2
+            pdf = pdfium.PdfDocument(self.file_path)
+            page = pdf[page_number - 1]
+            # Render at 2x scale for better OCR quality
+            bitmap = page.render(scale=2)
+            pil_image = bitmap.to_pil()
+            
+            # Save to bytes
+            img_byte_arr = io.BytesIO()
+            pil_image.save(img_byte_arr, format='PNG')
+            img_data = img_byte_arr.getvalue()
+            
+            pdf.close()
 
             # 2. Encode to base64
             base64_image = base64.b64encode(img_data).decode('utf-8')
@@ -31,9 +38,6 @@ class LLMFallbackExtractor:
                 "Preserve headings, clauses, and formatting. "
                 "Return ONLY the raw text without any commentary."
             )
-            
-            # Note: We need a utility that supports vision. I'll update utils.py or add a local method.
-            # Using the existing client for now assuming I add vision support to it.
             
             response = self._get_vision_completion(system_prompt, base64_image)
             return response if response else ""
@@ -48,13 +52,17 @@ class LLMFallbackExtractor:
             from openai import OpenAI
             from ..config import OPENAI_API_KEY, OPENAI_BASE_URL
             
-            # We use gpt-4o for vision as requested, with the correct base_url for OpenRouter
             client_vision = OpenAI(
                 api_key=OPENAI_API_KEY,
-                base_url=OPENAI_BASE_URL
+                base_url=OPENAI_BASE_URL,
+                default_headers={
+                    "HTTP-Referer": "https://github.com/ranjith44sys/contract-intelligent-system",
+                    "X-Title": "Contract Intelligent System",
+                    "Authorization": f"Bearer {OPENAI_API_KEY}" # Explicitly set for OpenRouter stability
+                }
             )
             response = client_vision.chat.completions.create(
-                model="gpt-4o",
+                model="openai/gpt-4o",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {
@@ -68,7 +76,7 @@ class LLMFallbackExtractor:
                         ]
                     }
                 ],
-                max_tokens=2048,
+                max_tokens=1024,
                 temperature=0
             )
             return response.choices[0].message.content

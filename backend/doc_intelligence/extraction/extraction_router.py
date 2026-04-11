@@ -1,48 +1,21 @@
-from .pymupdf_extractor import PyMuPDFExtractor
-from .llm_fallback_extractor import LLMFallbackExtractor
+from .hybrid_extractor import HybridExtractor
 from ..config import logger
 
 class ExtractionRouter:
-    def __init__(self, file_path, threshold=50):
+    def __init__(self, file_path):
         self.file_path = file_path
-        self.threshold = threshold
-        self.pymu_extractor = PyMuPDFExtractor(file_path)
-        self.llm_extractor = LLMFallbackExtractor(file_path)
+        self.hybrid_extractor = HybridExtractor(file_path)
 
-    def extract_full_document(self):
-        """Orchestrates extraction for the entire document page by page."""
-        page_count = self.pymu_extractor.get_page_count()
-        logger.info(f"Processing {page_count} pages with ExtractionRouter.")
+    def extract_full_document(self, progress_callback=None):
+        """
+        Orchestrates extraction using the v4 Hybrid Engine:
+        PyMuPDF (Text) + Camelot (Tables) + GPT-4o Vision (Images).
+        """
+        logger.info(f"Starting v4 Hybrid Extraction for: {self.file_path}")
         
-        full_extracted_data = []
-
-        for i in range(1, page_count + 1):
-            # 1. Try PyMuPDF
-            text = self.pymu_extractor.extract_page_text(i)
-            has_images = self.pymu_extractor.has_images(i)
-            
-            # 2. Decision Logic
-            use_fallback = False
-            if len(text) < self.threshold:
-                logger.info(f"Low text content on page {i} ({len(text)} chars).")
-                use_fallback = True
-            elif has_images:
-                logger.info(f"Page {i} contains images. Routing to LLM Vision fallback for high precision.")
-                use_fallback = True
-            
-            # 3. Route
-            if use_fallback:
-                final_text = self.llm_extractor.extract_page_text_vision(i)
-                # If vision fails, keep the raw text as fallback
-                if not final_text:
-                    logger.warning(f"Vision fallback failed on page {i}. Using PyMuPDF text.")
-                    final_text = text
-            else:
-                final_text = text
-
-            full_extracted_data.append({
-                "page_number": i,
-                "text": final_text
-            })
-
-        return full_extracted_data
+        try:
+            extracted_pages = self.hybrid_extractor.extract_all(progress_callback=progress_callback)
+            return extracted_pages
+        except Exception as e:
+            logger.error(f"Hybrid Extraction failed: {e}")
+            return [{"page_number": 1, "text": f"Extraction failed: {e}"}]

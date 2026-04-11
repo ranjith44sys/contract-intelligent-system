@@ -7,13 +7,13 @@ import logging
 BASE_DIR = Path(__file__).resolve().parent.parent
 env_path = BASE_DIR / ".env"
 
-# Load environment variables from backend/.env
-load_dotenv(dotenv_path=env_path)
+# Load environment variables from backend/.env (Override existing to ensure .env is source of truth)
+load_dotenv(dotenv_path=env_path, override=True)
 
 # OpenAI Configuration - NO HARDCODING
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "openai/gpt-4o-mini")
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0))
 
 # Logging Configuration

@@ -1,43 +1,57 @@
-# Implementation Approach: Document Intelligence (V3 Advanced)
+# Advanced Document Intelligence Pipeline (V4)
 
-This document outlines the architecture, tools, and methodologies used in the current production-grade implementation of the Document Intelligence system.
+A production-grade, layout-aware system for extracting, refining, and structuring legal contracts into RAG-ready knowledge graphs.
 
-## 1. Objective
-To build a high-performance system that transforms complex, unstructured legal PDFs into a structured "Clause Graph" (JSON). The system is optimized for RAG (Retrieval-Augmented Generation) and capable of handling image-only pages.
+## Pipeline Architecture
 
-## 2. Tools & Technologies
-- **Main Logic**: Python 3
-- **Core Extraction**: `PyMuPDF` (High-speed text and layout extraction).
-- **Vision Fallback**: OpenAI `gpt-4o` (Vision) for OCR and high-precision extraction of image-heavy pages.
-- **LLM Engine**: OpenAI/OpenRouter (Support for `gpt-4o-mini`).
-- **Processing**: `tiktoken` (Exact token counting for RAG) and `jsonschema` (Output validation).
-- **Architecture**: Granular modular pipeline with distinct stages for extraction, cleaning, chunking, and validation.
+```mermaid
+graph TD
+    A[PDF Document] --> B[Hybrid Extraction Router]
+    B -->|Layout-Aware| C[Docling Engine]
+    B -->|Fallback| D[PyMuPDF / GPT-4o Vision]
+    C & D --> E[Preprocessing & Cleaning]
+    E --> F[Document Classification]
+    F --> G[Semantic Segmentation]
+    G --> H[Clause Classification]
+    H --> I[Post-Processing Refinement Layer]
+    
+    subgraph Refinement
+        I1[Text Normalization]
+        I2[Semantic Title Refinement]
+        I3[Clause Splitting]
+        I4[Fixed Taxonomy Normalization]
+        I5[Definition Extraction]
+        I6[Reference Linker]
+        I7[Confidence Scoring]
+        I1 --> I2 --> I3 --> I4 --> I5 --> I6 --> I7
+    end
+    
+    I7 --> J[Clause Graph Generation]
+    J --> K[JSON Schema Validation]
+    K --> L[Output Knowledge Graph]
+```
 
-## 3. Core Approach
+## Key Components
 
-### A. Hybrid Extraction Layer
-The system uses an **Intelligent Extraction Router**:
-- **Standard Path**: Uses PyMuPDF for fast, structural text extraction.
-- **Vision Fallback**: If a page is detected as image-only or has low text density, the system converts it to a high-resolution image and uses GPT-4o Vision for precise transcription.
+### 1. Hybrid Extraction Engine (Docling)
+Replaced traditional OCR with **IBM Docling**, enabling layout-aware extraction of tables, headers, and section hierarchies.
+- **Robust Fallback**: Automatically degrades to PyMuPDF or GPT-4o Vision if memory constraints or complex layouts cause Docling failures.
 
-### B. Production-Grade Preprocessing
-Raw text is rarely clean. The `TextCleaner` module performs:
-- **Noise Filtering**: Removes OCR artifacts and random symbols.
-- **Hyphenation Correction**: Automatically rejoins words that were split across line breaks.
-- **Normalization**: Standardizes whitespaces and structural markers for downstream processing.
+### 2. Zero-Shot Classification
+Uses Large Language Models (LLMs) to identify document types and clause categories without hardcoded rules, enabling the system to adapt to any contract type.
 
-### C. Zero-Shot Classification
-To escape the limitations of hardcoded taxonomies, the system now uses **Zero-Shot Learning (ZSL)**:
-- **Dynamic Categorization**: The LLM categorizes contracts and clauses based on their inherent legal meaning without being confined to a predefined list.
-- **High Flexibility**: The system automatically adapts to niche contract types and novel legal clauses.
+### 3. Post-Processing Refinement (New in V4)
+A dedicated layer that runs 7 specialized micro-tasks to ensure production-grade quality:
+- **Semantic Titles**: Replaces generic headings (e.g., "Section 1") with meaningful titles (e.g., "Non-Compete Boundaries").
+- **Overloaded Clause Splitting**: Detects multi-topic clauses and breaks them into granular sub-clauses for better RAG retrieval.
+- **Reference Linking**: Extracts cross-references between sections and links them to defined terms.
+- **Taxonomy Mapping**: Standardizes fuzzy AI classifications into a 16-point canonical legal taxonomy.
 
-### D. RAG-Ready Semantic Chunking
-- **Token-Based**: Text is split using a sliding window approach optimized for specific token limits (GPT context windows).
-- **Semantic Mapping**: Every chunk is explicitly tagged with its parent `Clause ID`, `Location (Page)`, and `Contract Type`, ensuring high-precision retrieval during the guidance/reasoning phase.
+### 4. RAG-Ready Structuring
+Final output is a structured JSON graph optimized for Vector Search and Graph RAG:
+- **Token-Aware Chunking**: Maintains semantic context while respecting LLM token limits.
+- **Metadata Rich**: Includes page numbers, section identifiers, definitions, and confidence scores.
 
-### E. Resilient Graph Generation & Validation
-- **Schema Enforcement**: The final output is validated against a strict JSON schema to ensure consumption by the backend is always error-free.
-- **Retry Logic**: All LLM-based stages use exponential backoff with jitter to handle intermittent API failures or rate limits, ensuring maximum reliability.
-
-## 4. Integration
-The system is integrated into a **FastAPI backend**, exposed via a secure `/api/extract` endpoint with internal API key authentication and support for custom base URLs (e.g., OpenRouter).
+## Performance Optimization
+- **Parallel Processing**: Refinement tasks for individual clauses run in parallel to minimize latency.
+- **Memory Management**: Docling optimized to run with OCR disabled for standard contracts, preventing mid-flight crashes on large 60+ page files.

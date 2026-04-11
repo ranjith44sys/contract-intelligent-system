@@ -16,6 +16,26 @@ CLAUSE_GRAPH_SCHEMA = {
             "raw_text": {"type": "string"},
             "page_number": {"type": "integer"},
             "section_number": {"type": "string"},
+            "definitions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "term": {"type": "string"},
+                        "definition": {"type": "string"}
+                    }
+                }
+            },
+            "references": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "value": {"type": "string"}
+                    }
+                }
+            },
             "chunks": {
                 "type": "array",
                 "items": {

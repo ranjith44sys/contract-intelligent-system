@@ -1,5 +1,5 @@
 openai
-pymupdf
+docling
 camelot-py[cv]
 pandas
 python-dotenv
